@@ -1,0 +1,561 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[73]:
+
+
+import pandas as pd
+import quandl
+import datetime
+import matplotlib.pyplot as plt
+ 
+# Nous examinerons les cours des actions au cours de la dernière année, à compter du 1er janvier 2016
+start = datetime.datetime(2016,1,1)
+end = datetime.date.today()
+ 
+# Récupérons les données sur les actions Apple; Le symbole boursier d’Apple est AAPL
+# Le premier argument est la série que nous voulons, le second est la source ("yahoo" pour Yahoo! Finance), le troisième est la date de début, le quatrième est la date de fin.
+s = "AAPL"
+apple = quandl.get("WIKI/" + s, start_date=start, end_date=end)
+ 
+type(apple)
+
+
+# In[75]:
+
+
+apple.head()
+
+
+# In[22]:
+
+
+
+# Cette ligne est nécessaire pour que l'intrigue apparaisse dans un cahier Jupyter.
+
+get_ipython().run_line_magic('matplotlib', 'inline')
+
+# Contrôle la taille par défaut des figures dans ce cahier Jupyter
+
+get_ipython().run_line_magic('pylab', 'inline')
+pylab.rcParams['figure.figsize'] = (15, 9)   			# Changer la taille des plots
+ 
+apple["Adj. Close"].plot(grid = True) 					# Plot il a ajusté le cours de clôture de l'AAPL
+
+
+# In[23]:
+
+
+from matplotlib.dates import DateFormatter, WeekdayLocator,    DayLocator, MONDAY
+from mpl_finance import candlestick_ohlc
+ 
+def pandas_candlestick_ohlc(dat, stick = "day", adj = False, otherseries = None):
+ """
+     : param dat: objet DataFrame pandas avec index datetime64 et colonnes flottantes "Open", "High", "Low" et "Close", probablement créées via DataReader à partir de "yahoo"
+     : param stick: Chaîne ou nombre indiquant la période couverte par un seul chandelier. Les entrées de chaîne valides incluent "jour", "semaine", "mois" et "année" ("jour" par défaut), et toute entrée numérique indique le nombre de jours de négociation compris dans une période.
+     : param adj: un booléen indiquant s'il faut utiliser des prix ajustés
+     : param otherseries: un élément itératif qui sera forcé dans une liste, contenant les colonnes de données contenant d'autres séries à tracer sous forme de lignes
+ 
+     Cela affichera un graphique en chandeliers japonais pour les données de stock stockées dans dat, ainsi que d'autres séries si elles sont transmises.
+     """
+    mondays = WeekdayLocator(MONDAY)        # Nombre de ticks majeurs le lundi
+    alldays = DayLocator()                  # tiques mineures les jours
+    dayFormatter = DateFormatter('%d')      # e.g., 12
+ 
+	# Créer un nouveau DataFrame qui inclut les données OHLC pour chaque période spécifiée par stick stick
+    fields = ["Open", "High", "Low", "Close"]
+    if adj:
+        fields = ["Adj. " + s for s in fields]
+    transdat = dat.loc[:,fields]
+    transdat.columns = pd.Index(["Open", "High", "Low", "Close"])
+    if (type(stick) == str):
+        if stick == "day":
+            plotdat = transdat
+            stick = 1 						# Utilisé pour le traçage
+        elif stick in ["week", "month", "year"]:
+            if stick == "week":
+                transdat["week"] = pd.to_datetime(transdat.index).map(lambda x: x.isocalendar()[1]) 		# Identifier les semaines
+            elif stick == "month":
+                transdat["month"] = pd.to_datetime(transdat.index).map(lambda x: x.month) 					# Identifier les mois
+            transdat["year"] = pd.to_datetime(transdat.index).map(lambda x: x.isocalendar()[0]) 			# Identifier les Années
+            grouped = transdat.groupby(list(set(["year",stick]))) 											# Groupe par année et autre variable appropriée
+            plotdat = pd.DataFrame({"Open": [], "High": [], "Low": [], "Close": []}) 						# Créer un cadre de données vide contenant ce qui sera tracé
+            for name, group in grouped:
+                plotdat = plotdat.append(pd.DataFrame({"Open": group.iloc[0,0],
+                                            "High": max(group.High),
+                                            "Low": min(group.Low),
+                                            "Close": group.iloc[-1,3]},
+                                           index = [group.index[0]]))
+            if stick == "week": stick = 5
+            elif stick == "month": stick = 30
+            elif stick == "year": stick = 365
+ 
+    elif (type(stick) == int and stick >= 1):
+        transdat["stick"] = [np.floor(i / stick) for i in range(len(transdat.index))]
+        grouped = transdat.groupby("stick")
+        plotdat = pd.DataFrame({"Open": [], "High": [], "Low": [], "Close": []}) 							# Créer un cadre de données vide contenant ce qui sera tracé
+            plotdat = plotdat.append(pd.DataFrame({"Open": group.iloc[0,0],
+                                        "High": max(group.High),
+                                        "Low": min(group.Low),
+                                        "Close": group.iloc[-1,3]},
+                                       index = [group.index[0]]))
+ 
+    else:
+        raise ValueError('Valid inputs to argument "stick" include the strings "day", "week", "month", "year", or a positive integer')
+ 
+ 
+   # Définir les paramètres du tracé, y compris l'axe de l'axe utilisé pour le traçage
+    fig, ax = plt.subplots()
+    fig.subplots_adjust(bottom=0.2)
+    if plotdat.index[-1] - plotdat.index[0] < pd.Timedelta('730 days'):
+        weekFormatter = DateFormatter('%b %d')  						# e.g., Jan 12
+        ax.xaxis.set_major_locator(mondays)
+        ax.xaxis.set_minor_locator(alldays)
+    else:
+        weekFormatter = DateFormatter('%b %d, %Y')
+    ax.xaxis.set_major_formatter(weekFormatter)
+ 
+    ax.grid(True)
+ 
+	# Créer le graphique en chandeliers
+    candlestick_ohlc(ax, list(zip(list(date2num(plotdat.index.tolist())), plotdat["Open"].tolist(), plotdat["High"].tolist(),
+                      plotdat["Low"].tolist(), plotdat["Close"].tolist())),
+                      colorup = "black", colordown = "red", width = stick * .4)
+ 
+	# Tracez d'autres séries (telles que des moyennes mobiles) sous forme de lignes
+    if otherseries != None:
+        if type(otherseries) != list:
+            otherseries = [otherseries]
+        dat.loc[:,otherseries].plot(ax = ax, lw = 1.3, grid = True)
+ 
+    ax.xaxis_date()
+    ax.autoscale_view()
+    plt.setp(plt.gca().get_xticklabels(), rotation=45, horizontalalignment='right')
+ 
+    plt.show()
+ 
+pandas_candlestick_ohlc(apple, adj=True, stick="month")
+
+
+# In[24]:
+
+
+microsoft, google = (quandl.get("WIKI/" + s, start_date=start, end_date=end) for s in ["MSFT", "GOOG"])
+ 
+# Ci-dessous, je crée un DataFrame comprenant le cours de clôture ajusté de ces actions, tout d'abord en dressant une liste de ces objets et en utilisant la méthode de jointure.
+stocks = pd.DataFrame({"AAPL": apple["Adj. Close"],
+                      "MSFT": microsoft["Adj. Close"],
+                      "GOOG": google["Adj. Close"]})
+ 
+stocks.head()
+
+
+# In[25]:
+
+
+stocks.plot(grid = True)
+
+
+# In[26]:
+
+
+stocks.plot(secondary_y = ["AAPL", "MSFT"], grid = True)
+
+
+# In[27]:
+
+
+# df.apply (arg) appliquera la fonction arg à chaque colonne de df et renverra un DataFrame avec le résultat.
+# Rappelons que lambda x est une fonction anonyme acceptant le paramètre x; dans ce cas, x sera un objet de la série pandas
+stock_return = stocks.apply(lambda x: x / x[0])
+stock_return.head() - 1
+
+
+# In[28]:
+
+
+stock_return.plot(grid = True).axhline(y = 1, color = "black", lw = 2)
+
+
+# In[29]:
+
+
+# Utilisons la fonction de journal NumPy, la fonction de journal mathématique fonctionnerait aussi bien
+import numpy as np
+ 
+stock_change = stocks.apply(lambda x: np.log(x) - np.log(x.shift(1))) 				# shift moves dates back by 1.
+stock_change.head()
+
+
+# In[30]:
+
+
+stock_change.plot(grid = True).axhline(y = 0, color = "black", lw = 2)
+
+
+# In[33]:
+
+
+stock_change_apr = stock_change * 252 * 100    										# Il y a 252 jours de bourse par an; les 100 convertis en pourcentages
+stock_change_apr.tail()
+
+
+# In[34]:
+
+
+tbill = quandl.get("FRED/TB3MS", start_date=start, end_date=end)
+tbill.tail()
+
+
+# In[35]:
+
+
+tbill.plot()
+
+
+# In[36]:
+
+
+rrf = tbill.iloc[-1, 0]    															# Obtenez le dernier taux des bons du Trésor
+
+
+# In[40]:
+
+
+apple["30d"] = np.round(apple["Adj. Close"].rolling(window = 50, center = False).mean(), 2)
+pandas_candlestick_ohlc(apple.loc['2009-01-04':'2018-12-31',:], otherseries = "20d", adj=True)
+
+
+# In[41]:
+
+
+start = datetime.datetime(2010,1,1)
+apple = quandl.get("WIKI/AAPL", start_date=start, end_date=end)
+apple["20d"] = np.round(apple["Adj. Close"].rolling(window = 20, center = False).mean(), 2)
+ 
+pandas_candlestick_ohlc(apple.loc['2009-01-04':'2018-12-31',:], otherseries = "20d", adj=True)
+
+
+# In[46]:
+
+
+apple["50d"] = np.round(apple["Adj. Close"].rolling(window = 50, center = False).mean(), 2)
+apple["200d"] = np.round(apple["Adj. Close"].rolling(window = 200, center = False).mean(), 2)
+ 
+pandas_candlestick_ohlc(apple.loc['2009-01-04':'2018-12-31',:], otherseries = ["20d", "50d", "200d",], adj=True)
+
+
+# In[47]:
+
+
+apple['20d-50d'] = apple['20d'] - apple['50d']
+apple.tail()
+
+
+# In[48]:
+
+
+# np.where () est une fonction if if else vectorisée, dans laquelle une condition est vérifiée pour chaque composant d'un vecteur et le premier argument transmis est utilisé lorsque la condition est remplie, et l'autre passé s'il ne le fait pas.
+apple["Regime"] = np.where(apple['20d-50d'] > 0, 1, 0)
+# Nous avons 1 pour les régimes haussiers et 0 pour tout le reste. Ci-dessous, je remplace les valeurs des régimes baissiers par -1, et pour conserver le reste du vecteur, le deuxième argument est apple ["Régime"]
+apple["Regime"] = np.where(apple['20d-50d'] < 0, -1, apple["Regime"])
+apple.loc['2016-01-04':'2016-12-31',"Regime"].plot(ylim = (-2,2)).axhline(y = 0, color = "black", lw = 2)
+
+
+# In[49]:
+
+
+apple["Regime"].plot(ylim = (-2,2)).axhline(y = 0, color = "black", lw = 2)
+
+
+# In[50]:
+
+
+apple["Regime"].value_counts()
+
+
+# In[51]:
+
+# Pour que toutes les transactions soient clôturées, je change temporairement le régime de la dernière ligne en 0
+regime_orig = apple.loc[:, "Regime"].iloc[-1]
+apple.loc[:, "Regime"].iloc[-1] = 0
+apple["Signal"] = np.sign(apple["Regime"] - apple["Regime"].shift(1))
+
+# Restaurer les données du régime d'origine
+apple.loc[:, "Regime"].iloc[-1] = regime_orig
+apple.tail()
+
+# In[52]:
+
+apple["Signal"].plot(ylim = (-2, 2))
+
+# In[53]:
+
+apple["Signal"].value_counts()
+
+# In[54]:
+
+apple.loc[apple["Signal"] == 1, "Close"]
+
+# In[55]:
+
+apple.loc[apple["Signal"] == -1, "Close"]
+
+# In[56]:
+
+# Créer un DataFrame avec les transactions, y compris le prix au commerce et le régime sous lequel la transaction est faite.
+apple_signals = pd.concat([
+        pd.DataFrame({"Price": apple.loc[apple["Signal"] == 1, "Adj. Close"],
+                     "Regime": apple.loc[apple["Signal"] == 1, "Regime"],
+                     "Signal": "Buy"}),
+        pd.DataFrame({"Price": apple.loc[apple["Signal"] == -1, "Adj. Close"],
+                     "Regime": apple.loc[apple["Signal"] == -1, "Regime"],
+                     "Signal": "Sell"}),
+    ])
+apple_signals.sort_index(inplace = True)
+apple_signals
+
+
+# In[57]:
+
+
+# Voyons la rentabilité des trades longs
+apple_long_profits = pd.DataFrame({
+        "Price": apple_signals.loc[(apple_signals["Signal"] == "Buy") &
+                                  apple_signals["Regime"] == 1, "Price"],
+        "Profit": pd.Series(apple_signals["Price"] - apple_signals["Price"].shift(1)).loc[
+            apple_signals.loc[(apple_signals["Signal"].shift(1) == "Buy") & (apple_signals["Regime"].shift(1) == 1)].index
+        ].tolist(),
+        "End Date": apple_signals["Price"].loc[
+            apple_signals.loc[(apple_signals["Signal"].shift(1) == "Buy") & (apple_signals["Regime"].shift(1) == 1)].index
+        ].index
+    })
+apple_long_profits
+
+
+# In[58]:
+
+
+# Nous devons obtenir le prix le plus bas lors de chaque transaction.
+tradeperiods = pd.DataFrame({"Start": apple_long_profits.index,
+                            "End": apple_long_profits["End Date"]})
+apple_long_profits["Low"] = tradeperiods.apply(lambda x: min(apple.loc[x["Start"]:x["End"], "Adj. Low"]), axis = 1)
+apple_long_profits
+
+
+# In[62]:
+
+# Nous avons maintenant toutes les informations nécessaires pour simuler cette stratégie dans apple_adj_long_profits
+cash = 1000000
+apple_backtest = pd.DataFrame({"Start Port. Value": [],
+                         "End Port. Value": [],
+                         "End Date": [],
+                         "Shares": [],
+                         "Share Price": [],
+                         "Trade Value": [],
+                         "Profit per Share": [],
+                         "Total Profit": [],
+                         "Stop-Loss Triggered": []})
+port_value = .1  																# Proportion maximum de portefeuille misée sur n'importe quel trade
+batch = 100      																# Nombre d'actions achetées par lot
+stoploss = .2    																#% de perte trade susceptibles de déclencher un stop loss
+for index, row in apple_long_profits.iterrows():
+    batches = np.floor(cash * port_value) // np.ceil(batch * row["Price"]) 		# Combien d'argent est mis en jeu avec chaque trade
+    trade_val = batches * batch * row["Price"] 									# Combien d'argent est mis en jeu avec chaque trade
+    if row["Low"] < (1 - stoploss) * row["Price"]:   							# Compte pour le stop-loss
+        share_profit = np.round((1 - stoploss) * row["Price"], 2)
+        stop_trig = True
+    else:
+        share_profit = row["Profit"]
+        stop_trig = False
+    profit = share_profit * batches * batch 									# Calculer les bénéfices
+	
+	# Ajouter une ligne au cadre de données backtest contenant les résultats de l'échange
+    apple_backtest = apple_backtest.append(pd.DataFrame({
+                "Start Port. Value": cash,
+                "End Port. Value": cash + profit,
+                "End Date": row["End Date"],
+                "Shares": batch * batches,
+                "Share Price": row["Price"],
+                "Trade Value": trade_val,
+                "Profit per Share": share_profit,
+                "Total Profit": profit,
+                "Stop-Loss Triggered": stop_trig
+            }, index = [index]))
+    cash = max(0, cash + profit)
+ 
+apple_backtest
+
+
+# In[63]:
+
+
+apple_backtest["End Port. Value"].plot()
+
+
+# In[64]:
+
+
+def ma_crossover_orders(stocks, fast, slow):
+"""
+     : param stocks: une liste de n-uplets, le premier argument de chaque tuple étant une chaîne contenant le symbole boursier de chaque action (ou comme vous le souhaitez, l'action étant représentée, tant qu'elle est unique), et le second étant un pandas DataFrame contenant le stocks, avec une colonne "Fermer" et une indexation par date (comme les trames de données renvoyées par l'API Yahoo! Finance)
+     : param fast: Entier pour le nombre de jours utilisés dans la moyenne mobile rapide
+     : param slow: Entier pour le nombre de jours utilisés dans la moyenne mobile lente
+ 
+     : return: pandas DataFrame contenant des commandes de stock
+ 
+     Cette fonction prend une liste d'actions et détermine le moment où chaque action sera achetée ou vendue en fonction d'une stratégie de croisement à moyenne mobile, renvoyant une trame de données contenant des informations sur le moment où les actions du portefeuille sont achetées ou vendues conformément à la stratégie.
+     """
+    fast_str = str(fast) + 'd'
+    slow_str = str(slow) + 'd'
+    ma_diff_str = fast_str + '-' + slow_str
+ 
+    trades = pd.DataFrame({"Price": [], "Regime": [], "Signal": []})
+    for s in stocks:
+		# Obtenir les moyennes mobiles, rapides et lentes, ainsi que la différence entre les moyennes mobiles
+        s[1][fast_str] = np.round(s[1]["Close"].rolling(window = fast, center = False).mean(), 2)
+        s[1][slow_str] = np.round(s[1]["Close"].rolling(window = slow, center = False).mean(), 2)
+        s[1][ma_diff_str] = s[1][fast_str] - s[1][slow_str]
+ 
+		# np.where () est une fonction if if else vectorisée, dans laquelle une condition est vérifiée pour chaque composant d'un vecteur et le premier argument transmis est utilisé lorsque la condition est remplie, et l'autre passé s'il ne le fait pas.
+        s[1]["Regime"] = np.where(s[1][ma_diff_str] > 0, 1, 0)
+		# Nous avons 1 pour les régimes haussiers et 0 pour tout le reste. Ci-dessous, je remplace les valeurs des régimes baissiers par -1, et pour conserver le reste du vecteur, le deuxième argument est apple ["Régime"]
+        s[1]["Regime"] = np.where(s[1][ma_diff_str] < 0, -1, s[1]["Regime"])
+		# Pour que toutes les transactions soient clôturées, je change temporairement le régime de la dernière ligne en 0
+        regime_orig = s[1].loc[:, "Regime"].iloc[-1]
+        s[1].loc[:, "Regime"].iloc[-1] = 0
+        s[1]["Signal"] = np.sign(s[1]["Regime"] - s[1]["Regime"].shift(1))
+		# Restaurer les données du régime d'origine
+        s[1].loc[:, "Regime"].iloc[-1] = regime_orig
+ 
+		# Obtenir les signaux
+        signals = pd.concat([
+            pd.DataFrame({"Price": s[1].loc[s[1]["Signal"] == 1, "Adj. Close"],
+                         "Regime": s[1].loc[s[1]["Signal"] == 1, "Regime"],
+                         "Signal": "Buy"}),
+            pd.DataFrame({"Price": s[1].loc[s[1]["Signal"] == -1, "Adj. Close"],
+                         "Regime": s[1].loc[s[1]["Signal"] == -1, "Regime"],
+                         "Signal": "Sell"}),
+        ])
+        signals.index = pd.MultiIndex.from_product([signals.index, [s[0]]], names = ["Date", "Symbol"])
+        trades = trades.append(signals)
+ 
+    trades.sort_index(inplace = True)
+    trades.index = pd.MultiIndex.from_tuples(trades.index, names = ["Date", "Symbol"])
+ 
+    return trades
+ 
+ 
+def backtest(signals, cash, port_value = .1, batch = 100):
+"""
+     : param signaux: pandas DataFrame contenant des signaux d'achat et de vente avec prix des actions et symboles, comme celui renvoyé par ma_crossover_orders
+     : param cash: entier pour la valeur de départ
+     : param port_value: proportion maximale du portefeuille en risque sur une seule transaction
+     : param batch: Taille des lots de trading
+ 
+     : return: pandas DataFrame avec des résultats de backtesting
+ 
+     Cette fonction backtests les stratégies, les signaux générés par les stratégies étant transmis dans les signaux DataFrame. Un portefeuille fictif est simulé et les rendements générés par ce portefeuille sont rapportés.
+     
+"""
+ 
+    SYMBOL = 1 													# Constante pour laquelle l'élément dans l'index représente le symbole
+    portfolio = dict()    										# Contiendra le nombre d'actions en portefeuille pour un symbole donné
+    port_prices = dict()  										# Suit les anciens prix du trade pour déterminer les bénéfices
+    
+	# Dataframe qui contiendra un rapport de backtesting
+    results = pd.DataFrame({"Start Cash": [],
+                            "End Cash": [],
+                            "Portfolio Value": [],
+                            "Type": [],
+                            "Shares": [],
+                            "Share Price": [],
+                            "Trade Value": [],
+                            "Profit per Share": [],
+                            "Total Profit": []})
+ 
+    for index, row in signals.iterrows():
+        # Ces premières lignes sont faites pour tout Trade
+        shares = portfolio.setdefault(index[SYMBOL], 0)
+        trade_val = 0
+        batches = 0
+        cash_change = row["Price"] * shares   					# Les actions pourraient potentiellement être un nombre positif ou négatif (cash_change sera ajouté à la fin; les actions négatives indiquent un court)
+
+        portfolio[index[SYMBOL]] = 0  							# Pour un symbole donné, une position est effacée
+        old_price = port_prices.setdefault(index[SYMBOL], row["Price"])
+        portfolio_val = 0
+        for key, val in portfolio.items():
+            portfolio_val += val * port_prices[key]
+ 
+        if row["Signal"] == "Buy" and row["Regime"] == 1:  		# Entrer dans une position longue
+            batches = np.floor((portfolio_val + cash) * port_value) // np.ceil(batch * row["Price"]) # Nombre maximal de lots de stocks investis dedans
+            trade_val = batches * batch * row["Price"] 			# Combien d'argent est mis en jeu avec chaque trade
+            cash_change -= trade_val  							# Nous achetons des actions pour que les liquidités diminuent
+            portfolio[index[SYMBOL]] = batches * batch  		# Enregistrement du nombre d'actions actuellement investies dans le stock
+            port_prices[index[SYMBOL]] = row["Price"]   		# Record price
+            old_price = row["Price"]
+        elif row["Signal"] == "Sell" and row["Regime"] == -1: 	#Prix record
+            pass
+			# Ne fais rien; pouvons-nous fournir une méthode pour court-circuiter le marché?
+         #autre:
+            #raise ValueError ("Je ne sais pas quoi faire avec le signal" + row ["Signal"])
+ 
+        pprofit = row["Price"] - old_price   					# Calculer le bénéfice par action; old_price est défini de telle manière que la saisie d'une position génère un profit nul
+ 
+        # Rapport de mise à jour
+        results = results.append(pd.DataFrame({
+                "Start Cash": cash,
+                "End Cash": cash + cash_change,
+                "Portfolio Value": cash + cash_change + portfolio_val + trade_val,
+                "Type": row["Signal"],
+                "Shares": batch * batches,
+                "Share Price": row["Price"],
+                "Trade Value": abs(cash_change),
+                "Profit per Share": pprofit,
+                "Total Profit": batches * batch * pprofit
+            }, index = [index]))
+        cash += cash_change  									# Modification finale du solde de caisse
+ 
+    results.sort_index(inplace = True)
+    results.index = pd.MultiIndex.from_tuples(results.index, names = ["Date", "Symbol"])
+ 
+    return results
+ 
+# Obtenir plus de stocks
+(microsoft, google, facebook, twitter, netflix,
+amazon, yahoo, ge, qualcomm, ibm, hp) = (quandl.get("WIKI/" + s, start_date=start,
+                                                                         end_date=end) for s in ["MSFT", "GOOG", "FB", "TWTR",
+                                                                                                 "NFLX", "AMZN", "YHOO", "GE",
+                                                                                                 "QCOM", "IBM", "HPQ"])
+
+
+# In[65]:
+
+
+signals = ma_crossover_orders([("AAPL", apple),
+                              ("MSFT",  microsoft),
+                              ("GOOG",  google),
+                              ("FB",    facebook),
+                              ("TWTR",  twitter),
+                              ("NFLX",  netflix),
+                              ("AMZN",  amazon),
+                              ("YHOO",  yahoo),
+                              ("GE",    ge),
+                              ("QCOM",  qualcomm),
+                              ("IBM",   ibm),
+                              ("HPQ",   hp)],
+                            fast = 20, slow = 50)
+signals
+
+
+# In[66]:
+
+
+bk = backtest(signals, 1000000)
+bk
+
+
+# In[67]:
+
+
+bk["Portfolio Value"].groupby(level = 0).apply(lambda x: x[-1]).plot()
